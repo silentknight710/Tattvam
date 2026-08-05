@@ -1,13 +1,30 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, Security
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 import uvicorn
 import pdfplumber
 import pytesseract
 from PIL import Image
 import io
+import os
+from dotenv import load_dotenv
 from gemini_utils import parse_with_gemini
 
+load_dotenv()
+
 app = FastAPI(title="CarbonOS Extraction Service")
+
+API_KEY = os.getenv("EXTRACTION_SERVICE_API_KEY")
+
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+
+async def verify_api_key(key: str = Security(api_key_header)):
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="Server API key not configured")
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return key
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     text = ""
@@ -32,7 +49,8 @@ def extract_text_from_image(file_bytes: bytes) -> str:
 @app.post("/extract")
 async def extract_data(
     file: UploadFile = File(...),
-    doc_type: str = Form(...)
+    doc_type: str = Form(...),
+    _api_key: str = Depends(verify_api_key),
 ):
     """
     Extracts data from a document (PDF or Image) based on the doc_type.
