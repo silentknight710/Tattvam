@@ -7,3 +7,4 @@ Pillow
 google-generativeai
 pydantic
 python-dotenv
+slowapi
