@@ -1,5 +1,8 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import uvicorn
 import pdfplumber
 import pytesseract
@@ -7,7 +10,15 @@ from PIL import Image
 import io
 from gemini_utils import parse_with_gemini
 
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="CarbonOS Extraction Service")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(
+    status_code=429,
+    content={"status": "error", "message": "Too many requests. Please try again later."},
+))
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     text = ""
@@ -30,7 +41,9 @@ def extract_text_from_image(file_bytes: bytes) -> str:
         return ""
 
 @app.post("/extract")
+@limiter.limit("5/minute")
 async def extract_data(
+    request: Request,
     file: UploadFile = File(...),
     doc_type: str = Form(...)
 ):
@@ -40,8 +53,14 @@ async def extract_data(
     if doc_type not in ["electricity_bill", "fuel_invoice", "logistics_bill"]:
         raise HTTPException(status_code=400, detail="Invalid doc_type")
 
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large")
+
     try:
-        contents = await file.read()
+        contents = await file.read(MAX_FILE_SIZE + 1)
+        if len(contents) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large")
         raw_text = ""
 
         # Determine extraction method based on content type
